@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - S3_BUCKET=${S3_BUCKET}
+      - S3_ENDPOINT=${S3_ENDPOINT}
+      - REDIS_URL=redis://redis:6379/0
+      - DAILY_FREE_LIMIT=5
+    depends_on:
+      - redis
+
+  # NOTE: run the GPU worker (Dockerfile.worker) on RunPod / a GPU host,
+  # not on this compose stack — it needs a real GPU to be usable.
