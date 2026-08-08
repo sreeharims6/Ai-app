@@ -11,6 +11,10 @@ workflows:
       - name: Remove auto-generated test file
         script: |
           rm -rf test
+      - name: Add INTERNET permission to AndroidManifest.xml
+        script: |
+          sed -i 's#<manifest xmlns:android="http://schemas.android.com/apk/res/android">#<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>#' android/app/src/main/AndroidManifest.xml
+          cat android/app/src/main/AndroidManifest.xml
       - name: Get packages
         script: |
           flutter pub get
