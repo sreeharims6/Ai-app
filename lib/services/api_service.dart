@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Wraps calls to the backend: upload photo, start generation, poll status.
 class ApiService {
   // Point this at your deployed FastAPI backend.
-  static const String baseUrl = 'https://api.yourapp.com';
+  static const String baseUrl = 'https://ai-app-b6dr.onrender.com';
 
   Future<String> _deviceId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -93,3 +93,4 @@ class ApiService {
     }
   }
 }
+
