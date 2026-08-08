@@ -1,29 +1,31 @@
 """
 AI Photo-to-Video App — Backend API
 FastAPI service handling uploads, job creation, and status polling.
+Uses Supabase Storage (not S3) and Upstash Redis (TLS/rediss://).
 Free-to-use app: enforces a per-device daily generation cap to control GPU spend.
 """
 
 import os
 import uuid
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import boto3
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from celery import Celery
 import redis
+from supabase import create_client, Client
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-S3_BUCKET = os.environ["S3_BUCKET"]
-S3_ENDPOINT = os.environ.get("S3_ENDPOINT")  # e.g. Cloudflare R2 endpoint
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-CELERY_BROKER = os.environ.get("CELERY_BROKER", REDIS_URL)
-DAILY_FREE_LIMIT = int(os.environ.get("DAILY_FREE_LIMIT", "5"))  # generations/device/day
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]          # the secret/service_role key
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "ai-video-maker")
+
+REDIS_URL = os.environ["REDIS_URL"]                # starts with rediss:// (Upstash, TLS)
+DAILY_FREE_LIMIT = int(os.environ.get("DAILY_FREE_LIMIT", "5"))
 
 app = FastAPI(title="AI Video Maker API")
 app.add_middleware(
@@ -33,24 +35,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-s3 = boto3.client("s3", endpoint_url=S3_ENDPOINT)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# rediss:// URLs already carry TLS info; redis-py handles this automatically
+# when the scheme is "rediss" as long as we don't disable cert verification.
 r = redis.from_url(REDIS_URL)
-celery_app = Celery("video_tasks", broker=CELERY_BROKER, backend=REDIS_URL)
+celery_app = Celery("video_tasks", broker=REDIS_URL, backend=REDIS_URL)
+celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": "required"}
+celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": "required"}
 
 
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 class GenerateRequest(BaseModel):
-    image_key: str          # S3 key returned from /upload
-    motion_strength: int = 127   # SVD motion_bucket_id (higher = more motion)
+    image_key: str
+    motion_strength: int = 127
     fps: int = 7
     num_frames: int = 25
 
 
 class JobStatus(BaseModel):
     job_id: str
-    status: str              # queued | processing | done | failed
+    status: str
     result_url: str | None = None
     error: str | None = None
 
@@ -75,7 +82,7 @@ def check_and_increment_quota(device_id: str):
 # ---------------------------------------------------------------------------
 @app.post("/upload")
 async def upload_photo(file: UploadFile = File(...), x_device_id: str = Header(...)):
-    """Uploads a user photo to S3 and returns the storage key for /generate."""
+    """Uploads a user photo to Supabase Storage and returns the storage key."""
     ext = file.filename.split(".")[-1].lower()
     if ext not in ("jpg", "jpeg", "png"):
         raise HTTPException(400, "Only JPG/PNG supported")
@@ -86,7 +93,9 @@ async def upload_photo(file: UploadFile = File(...), x_device_id: str = Header(.
     if len(contents) > 10 * 1024 * 1024:
         raise HTTPException(400, "Image too large (max 10MB)")
 
-    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=contents, ContentType=file.content_type)
+    supabase.storage.from_(SUPABASE_BUCKET).upload(
+        key, contents, {"content-type": file.content_type}
+    )
     return {"image_key": key}
 
 
@@ -122,3 +131,4 @@ async def get_status(job_id: str):
 @app.get("/healthz")
 async def health():
     return {"ok": True}
+
